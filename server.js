@@ -1,89 +1,89 @@
 // server.js
 
 const express = require('express');
-const path = require('path')
+const path = require('path');
+const sqlite3 = require('sqlite3').verbose();
+const fs = require('fs');
+
 const app = express();
 const PORT = 3000;
+
+// Setup SQLite database
+const db = new sqlite3.Database('./todos.db');
+
+db.serialize(() => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS todos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      priority TEXT DEFAULT 'low',
+      isComplete INTEGER DEFAULT 0,
+      isFun TEXT DEFAULT 'true'
+    )
+  `);
+});
 
 // Middleware to parse JSON requests
 app.use(express.json());
 
-// TODO ➡️  Middleware to inlcude static content from 'public' folder
-app.use(express.static(path.join(__dirname, 'public')))
+// Serve static files (HTML, CSS, JS)
+app.use(express.static(path.join(__dirname, 'public')));
 
-// In-memory array to store todo items
-let todos = [];
-let nextId = 1;
-
-// TODO ➡️ serve index.html from 'public' at the '/' path
-app.get('/', (req, res)=>{
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-})
-
-
-// TODO ➡️ GET all todo items at the '/todos' path
+// Serve index.html
 app.get('/', (req, res) => {
-  res.json(todos);
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-
-
-// GET a specific todo item by ID
-app.get('/todos/:id', (req, res) => {
-  const id = parseInt(req.params.id);
-  const todo = todos.find(item => item.id === id);
-  if (todo) {
-    res.json(todo);
-  } else {
-    res.status(404).json({ message: 'Todo item not found' });
-  }
+// GET all todos
+app.get('/todos', (req, res) => {
+  db.all('SELECT * FROM todos', (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
 });
 
-// POST a new todo item
+// POST a new todo
 app.post('/todos', (req, res) => {
-  const { name, priority = 'low', isFun } = req.body;
+  const { name, priority = 'low', isFun = 'true' } = req.body;
 
   if (!name) {
     return res.status(400).json({ message: 'Name is required' });
   }
 
-  const newTodo = {
-    id: nextId++,
-    name,
-    priority,
-    isComplete: false,
-    isFun
-  };
-  
-  todos.push(newTodo);
+  const stmt = db.prepare('INSERT INTO todos (name, priority, isFun) VALUES (?, ?, ?)');
+  stmt.run(name, priority, isFun, function (err) {
+    if (err) return res.status(500).json({ error: err.message });
 
-  // TODO ➡️ Log every incoming TODO item in a 'todo.log' file @ the root of the project
-  // In your HW, you'd INSERT a row in your db table instead of writing to file or push to array!
+    const newTodo = {
+      id: this.lastID,
+      name,
+      priority,
+      isFun
+    };
 
-  const fs = require('fs');
-const logEntry = `New TODO added: ${JSON.stringify(newTodo)}\n`;
-fs.appendFile('todo.log', logEntry, err => {
-  if (err) console.error('Failed to log TODO:', err);
+    const logEntry = `New TODO added: ${JSON.stringify(newTodo)}\n`;
+    fs.appendFile('todo.log', logEntry, err => {
+      if (err) console.error('Failed to log TODO:', err);
+    });
+
+    res.status(201).json(newTodo);
+  });
 });
 
-  res.status(201).json(newTodo);
-});
-
-// DELETE a todo item by ID
+// DELETE a todo by ID
 app.delete('/todos/:id', (req, res) => {
   const id = parseInt(req.params.id);
-  const index = todos.findIndex(item => item.id === id);
-
-  if (index !== -1) {
-    todos.splice(index, 1);
+  db.run('DELETE FROM todos WHERE id = ?', id, function (err) {
+    if (err) return res.status(500).json({ error: err.message });
+    if (this.changes === 0) {
+      return res.status(404).json({ message: 'Todo item not found' });
+    }
     res.json({ message: `Todo item ${id} deleted.` });
-  } else {
-    res.status(404).json({ message: 'Todo item not found' });
-  }
+  });
 });
 
 // Start the server
-// TODO ➡️ Start the server by listening on the specified PORT
-app.listen(PORT, ()=>{
-  console.log('server is listening ...')
-})
+app.listen(PORT, () => {
+    console.log(`Server is listening at http://localhost:${PORT}`);
+  });
+  
